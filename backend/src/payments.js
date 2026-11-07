@@ -41,7 +41,7 @@ function assertPaymentsAvailable() {
   }
 }
 
-async function createMercadoPagoOrder(payload, idempotencyKey) {
+async function createMercadoPagoOrder(payload, idempotencyKey, deviceId) {
   assertPaymentsAvailable();
   const response = await fetch(`${MP_API}/v1/orders`, {
     method: 'POST',
@@ -49,6 +49,7 @@ async function createMercadoPagoOrder(payload, idempotencyKey) {
       Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}`,
       'Content-Type': 'application/json',
       'X-Idempotency-Key': idempotencyKey,
+      ...(deviceId ? { 'X-meli-session-id': deviceId } : {}),
     },
     body: JSON.stringify(payload),
   });
@@ -115,7 +116,7 @@ function stableFingerprint(payload) {
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
 
-async function submitPaymentOrder({ order, payload, paymentMethod, amount }) {
+async function submitPaymentOrder({ order, payload, paymentMethod, amount, deviceId }) {
   const fingerprint = stableFingerprint(payload);
   const attempt = await claimPaymentAttempt({
     orderId: order.id,
@@ -128,7 +129,7 @@ async function submitPaymentOrder({ order, payload, paymentMethod, amount }) {
 
   let result;
   try {
-    result = await createMercadoPagoOrder(payload, attempt.idempotencyKey);
+    result = await createMercadoPagoOrder(payload, attempt.idempotencyKey, deviceId);
   } catch (error) {
     // Only a definite 4xx response is safe to unlock for a new payment attempt.
     // Network failures and 5xx responses remain locked and can be replayed with
@@ -145,9 +146,12 @@ async function submitPaymentOrder({ order, payload, paymentMethod, amount }) {
 }
 
 function buildPayer(order, overrides = {}) {
+  const nameParts = String(order.customer.fullName || '').trim().split(/\s+/).filter(Boolean);
   const payer = {
     email: order.customer.email,
     entity_type: 'individual',
+    first_name: nameParts[0],
+    ...(nameParts.length > 1 ? { last_name: nameParts.slice(1).join(' ') } : {}),
     phone: {
       area_code: '51',
       number: String(overrides.phone || order.customer.phone).replace(/\D/g, '').slice(-9),
@@ -158,7 +162,17 @@ function buildPayer(order, overrides = {}) {
   return payer;
 }
 
-export async function payByCard({ orderId, token, paymentMethodId, paymentTypeId, installments, payer }) {
+function demoLineItem(amount) {
+  return {
+    title: 'Demostración de pago MOBI',
+    description: 'Demostración del flujo de pago; no es la compra del celular referencial.',
+    external_code: 'MOBI-DEMO-PAYMENT',
+    quantity: 1,
+    unit_price: amount,
+  };
+}
+
+export async function payByCard({ orderId, token, paymentMethodId, paymentTypeId, installments, payer, deviceId }) {
   if (!token || typeof token !== 'string') throw Object.assign(new Error('No se recibió el token seguro de la tarjeta.'), { status: 400 });
   if (!paymentMethodId || typeof paymentMethodId !== 'string') throw Object.assign(new Error('No se identificó la tarjeta.'), { status: 400 });
   const order = await getOrder(orderId);
@@ -171,6 +185,8 @@ export async function payByCard({ orderId, token, paymentMethodId, paymentTypeId
     type: 'online',
     processing_mode: 'automatic',
     total_amount: amount,
+    items: [demoLineItem(amount)],
+    config: { statement_descriptor: 'MOBI CHECKOUT' },
     payer: {
       ...buildPayer(order),
       ...(payer?.email ? { email: order.customer.email } : {}),
@@ -186,15 +202,16 @@ export async function payByCard({ orderId, token, paymentMethodId, paymentTypeId
           type: paymentType,
           token,
           installments: Math.min(12, Math.max(1, Number(installments) || 1)),
+          statement_descriptor: 'MOBI CHECKOUT',
         },
       }],
     },
   };
 
-  return submitPaymentOrder({ order, payload, paymentMethod: 'card', amount });
+  return submitPaymentOrder({ order, payload, paymentMethod: 'card', amount, deviceId });
 }
 
-export async function payByYape({ orderId, token, phoneNumber }) {
+export async function payByYape({ orderId, token, phoneNumber, deviceId }) {
   if (!token || typeof token !== 'string') throw Object.assign(new Error('No se pudo generar el token seguro de Yape.'), { status: 400 });
   const phone = String(phoneNumber || '').replace(/\D/g, '');
   const isTestMode = process.env.MP_ENVIRONMENT !== 'production';
@@ -211,6 +228,8 @@ export async function payByYape({ orderId, token, phoneNumber }) {
     type: 'online',
     processing_mode: 'automatic',
     total_amount: amount,
+    items: [demoLineItem(amount)],
+    config: { statement_descriptor: 'MOBI CHECKOUT' },
     payer: {
       ...buildPayer(order, { phone }),
       phone: { area_code: '51', number: phone },
@@ -223,7 +242,7 @@ export async function payByYape({ orderId, token, phoneNumber }) {
     },
   };
 
-  return submitPaymentOrder({ order, payload, paymentMethod: 'yape', amount });
+  return submitPaymentOrder({ order, payload, paymentMethod: 'yape', amount, deviceId });
 }
 
 async function fetchOrderByAttemptReference(order) {

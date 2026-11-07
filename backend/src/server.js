@@ -50,7 +50,7 @@ function validateCustomer(input = {}) {
     district: cleanText(input.district, 100),
     region: cleanText(input.region, 80),
   };
-  if (customer.fullName.length < 4) throw Object.assign(new Error('Escribe tu nombre y apellido.'), { status: 400 });
+  if (customer.fullName.split(/\s+/).filter(Boolean).length < 2) throw Object.assign(new Error('Escribe tu nombre y apellido.'), { status: 400 });
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customer.email)) throw Object.assign(new Error('Ingresa un correo electrónico válido.'), { status: 400 });
   if (!/^9\d{8}$/.test(customer.phone)) throw Object.assign(new Error('Ingresa un celular peruano válido de 9 dígitos.'), { status: 400 });
   if (customer.dni && customer.dni.length !== 8) throw Object.assign(new Error('El DNI debe tener 8 dígitos.'), { status: 400 });
@@ -167,6 +167,7 @@ app.post('/api/payments/card', paymentLimiter, async (req, res, next) => {
       paymentTypeId: cleanText(req.body.paymentTypeId, 40),
       installments: req.body.installments,
       payer: req.body.payer,
+      deviceId: cleanText(req.get('x-meli-session-id'), 256),
     });
     res.json({ order: publicOrder(result.order), providerStatus: result.providerStatus, statusDetail: result.statusDetail });
   } catch (error) {
@@ -180,6 +181,7 @@ app.post('/api/payments/yape', paymentLimiter, async (req, res, next) => {
       orderId: cleanText(req.body.orderId, 80),
       token: req.body.token,
       phoneNumber: req.body.phoneNumber,
+      deviceId: cleanText(req.get('x-meli-session-id'), 256),
     });
     res.json({ order: publicOrder(result.order), providerStatus: result.providerStatus, statusDetail: result.statusDetail });
   } catch (error) {

@@ -26,6 +26,11 @@ const money = (value: number) => new Intl.NumberFormat('es-PE', { style: 'curren
 const emptyCustomer: Customer = { fullName: '', email: '', phone: '', dni: '', address: '', district: '', region: 'Lima' };
 const categories = ['Todos', 'Apple', 'Samsung', 'Xiaomi'];
 
+function mercadoPagoDeviceHeaders(): Record<string, string> {
+  const deviceId = window.deviceId || window.MP_DEVICE_SESSION_ID;
+  return deviceId ? { 'X-meli-session-id': deviceId } : {};
+}
+
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
@@ -64,6 +69,7 @@ function CardPaymentBrick({
               try {
                 const response = await api<{ order: Order }>('/api/payments/card', {
                   method: 'POST',
+                  headers: mercadoPagoDeviceHeaders(),
                   body: JSON.stringify({
                     orderId: order.id,
                     token: formData.token,
@@ -239,7 +245,7 @@ function App() {
   const updateCustomer = (field: keyof Customer, value: string) => setCustomer((current) => ({ ...current, [field]: value }));
 
   const validateCustomer = () => {
-    if (customer.fullName.trim().length < 4) return 'Escribe tu nombre y apellido.';
+    if (customer.fullName.trim().split(/\s+/).filter(Boolean).length < 2) return 'Escribe tu nombre y apellido.';
     if (!/^\S+@\S+\.\S+$/.test(customer.email)) return 'Ingresa un correo electrónico válido.';
     if (!/^9\d{8}$/.test(customer.phone.replace(/\D/g, ''))) return 'Ingresa un celular peruano válido de 9 dígitos.';
     if (customer.dni && !/^\d{8}$/.test(customer.dni)) return 'El DNI debe tener 8 dígitos.';
@@ -274,6 +280,7 @@ function App() {
       if (!token) throw new Error('Yape no devolvió un token válido. Genera un nuevo código e inténtalo otra vez.');
       const response = await api<{ order: Order }>('/api/payments/yape', {
         method: 'POST',
+        headers: mercadoPagoDeviceHeaders(),
         body: JSON.stringify({ orderId: order.id, token, phoneNumber: phone }),
       });
       setYapeOtp('');
